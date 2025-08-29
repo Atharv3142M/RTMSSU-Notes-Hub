@@ -2,105 +2,178 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Google Drive Files</title>
+  <title>📚 Study Notes Library</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', sans-serif;
       background: #f4f7fc;
       margin: 0;
       padding: 20px;
     }
-
     h1 {
       text-align: center;
-      color: #333;
-      margin-bottom: 30px;
+      color: #222;
+      margin-bottom: 20px;
     }
-
     .file-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
       gap: 20px;
-      padding: 0;
     }
-
     .file-card {
-      background: white;
+      background: #fff;
       border-radius: 12px;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-      padding: 20px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+      padding: 16px;
       text-align: center;
       transition: transform 0.2s;
+      cursor: pointer;
     }
-
-    .file-card:hover {
-      transform: translateY(-5px);
+    .file-card:hover { transform: translateY(-4px); }
+    .file-card h3 {
+      font-size: 15px;
+      margin: 10px 0 6px;
+      color: #333;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-
-    .file-card a {
-      text-decoration: none;
-      color: #2b7de9;
-      font-weight: bold;
+    .file-card small {
+      color: #888;
+      font-size: 12px;
     }
+    .loading { text-align: center; margin-top: 40px; color: #555; }
 
-    .file-icon {
-      font-size: 50px;
-      margin-bottom: 10px;
-      color: #2b7de9;
+    /* Modal */
+    .viewer {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 1000;
     }
-
-    .loading {
-      text-align: center;
-      font-size: 18px;
-      color: #555;
+    .viewer-content {
+      background: #fff;
+      border-radius: 12px;
+      width: 90%; max-width: 900px;
+      height: 80%;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .viewer-header {
+      padding: 10px 14px;
+      font-weight: 600;
+      background: #f0f2f5;
+      border-bottom: 1px solid #ddd;
+      display: flex; justify-content: space-between;
+      align-items: center;
+    }
+    .viewer-iframe { flex: 1; border: 0; }
+    .watermark-overlay {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      opacity: 0.1;
+      background-repeat: repeat;
+      background-position: center;
     }
   </style>
 </head>
 <body>
-  <h1>📂 My Google Drive Files</h1>
-  <div id="loading" class="loading">Loading files...</div>
+  <h1>📚 Study Notes Library</h1>
+  <div id="loading" class="loading">Loading files…</div>
   <div class="file-grid" id="file-list"></div>
 
-  <script src="config.js"></script>
-  <script>
-    const apiKey = CONFIG.API_KEY;
-    const folderId = CONFIG.FOLDER_ID;
+  <!-- Viewer modal -->
+  <div id="viewer" class="viewer">
+    <div class="viewer-content">
+      <div class="viewer-header">
+        <span id="viewerTitle">Preview</span>
+        <button onclick="closeViewer()">✖ Close</button>
+      </div>
+      <div style="flex:1; position:relative;">
+        <iframe id="viewerFrame" class="viewer-iframe"></iframe>
+        <div id="wmOverlay" class="watermark-overlay"></div>
+      </div>
+    </div>
+  </div>
 
-    async function loadFiles() {
-      try {
-        const res = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&key=${apiKey}&fields=files(id,name,mimeType,webViewLink,iconLink)`
-        );
-        const data = await res.json();
+<script>
+/* CONFIG */
+const BASE64_FOLDER_ID = "MVlKNDE2V3JZbFhDV21GdENYSnB4VjN4MXNqdHdYZWdx"; // your encoded folder ID
+const API_KEY = "AIzaSyBTVp15nqxHBEBrL8g3BQlJyWGmUgIrjjA"; // your API key
 
-        const fileList = document.getElementById("file-list");
-        const loading = document.getElementById("loading");
-        loading.style.display = "none";
+/* Helpers */
+function getFolderId(){ return atob(BASE64_FOLDER_ID); }
+function escapeForSvg(s){ return String(s).replace(/[&<>#'"]/g, c => ({'&':'%26','<':'%3C','>':'%3E','#':'%23',"'":"%27",'"':'%22'}[c])); }
+function updateWatermark(text){
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='500' height='300'>
+    <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
+      transform='rotate(-30 250 150)' font-size='20' fill='black' opacity='0.2'>
+      ${escapeForSvg(text)}
+    </text></svg>`;
+  document.getElementById('wmOverlay').style.backgroundImage = `url("data:image/svg+xml;utf8,${svg}")`;
+}
 
-        if (!data.files || data.files.length === 0) {
-          fileList.innerHTML = "<p>No files found in this folder.</p>";
-          return;
-        }
+/* Load files */
+async function loadFiles(){
+  try {
+    const folderId = getFolderId();
+    const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&key=${API_KEY}&fields=files(id,name,mimeType)`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error("Drive API error");
+    const data = await res.json();
 
-        data.files.forEach(file => {
-          const card = document.createElement("div");
-          card.className = "file-card";
+    const list = document.getElementById("file-list");
+    const loading = document.getElementById("loading");
+    loading.style.display = "none";
 
-          card.innerHTML = `
-            <div class="file-icon">📄</div>
-            <p>${file.name}</p>
-            <a href="${file.webViewLink}" target="_blank">Open</a>
-          `;
-
-          fileList.appendChild(card);
-        });
-      } catch (err) {
-        console.error("Error loading files:", err);
-        document.getElementById("loading").innerText = "❌ Failed to load files.";
-      }
+    if(!data.files || !data.files.length){
+      list.innerHTML = "<p>No files found.</p>";
+      return;
     }
 
-    loadFiles();
-  </script>
+    data.files.forEach(file => {
+      const card = document.createElement("div");
+      card.className = "file-card";
+      card.innerHTML = `
+        <div style="font-size:40px">📄</div>
+        <h3>${file.name}</h3>
+        <small>${file.mimeType.includes("folder") ? "Folder" : "File"}</small>
+      `;
+      card.onclick = () => openViewer(file);
+      list.appendChild(card);
+    });
+
+  } catch(err) {
+    console.error(err);
+    document.getElementById("loading").innerText = "❌ Failed to load files.";
+  }
+}
+
+/* Viewer */
+function openViewer(file){
+  document.getElementById("viewerTitle").textContent = file.name;
+  document.getElementById("viewerFrame").src = `https://drive.google.com/file/d/${file.id}/preview`;
+  updateWatermark(`Study Notes • ${file.name} • ${new Date().toLocaleString()}`);
+  document.getElementById("viewer").style.display = "flex";
+}
+function closeViewer(){
+  document.getElementById("viewerFrame").src = "";
+  document.getElementById("viewer").style.display = "none";
+}
+
+/* Disable right-click & inspect */
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('keydown', e => {
+  if((e.ctrlKey && ['s','u','p'].includes(e.key.toLowerCase())) || e.key === 'F12'){
+    e.preventDefault();
+  }
+});
+
+/* Boot */
+loadFiles();
+</script>
 </body>
 </html>
